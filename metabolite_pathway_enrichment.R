@@ -97,11 +97,11 @@ parse_samples <- function(data) {
 # ── 4. Average intensities per condition ───────────────────────────────────────
 average_intensities <- function(data, sample_info) {
   find_col <- function(pattern)
-    grep(pattern, colnames(data), ignore.case = TRUE, value = TRUE)[1]
+    grep(pattern, colnames(data), ignore.case = TRUE, perl = TRUE, value = TRUE)[1]
 
   name_col <- find_col("^name$")
-  mz_col   <- find_col("^(mz|m\\.z|m/z)")   # no $ — matches "m/z meas." etc.
-  rt_col   <- find_col("^rt\\b|^retention")  # matches "RT [min]" and "retention time"
+  mz_col   <- find_col("^(mz|m\\.z|m/z)")  # matches "m/z meas." etc.
+  rt_col   <- find_col("^rt|^retention")    # matches "RT [min]"
 
   if (any(is.na(c(name_col, mz_col, rt_col))))
     stop("Could not locate name/mz/rt columns. Found: ", paste(colnames(data), collapse = ", "))
