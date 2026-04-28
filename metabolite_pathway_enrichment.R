@@ -200,25 +200,58 @@ map_kegg <- function(avg, cache_file = "kegg_mapping_cache.rds") {
   tryCatch({
     r <- GET(url, timeout(15), add_headers(Accept = "application/json"))
     if (status_code(r) != 200) return(NULL)
-    fromJSON(content(r, "text", encoding = "UTF-8"), simplifyVector = FALSE)
+    parsed <- fromJSON(content(r, "text", encoding = "UTF-8"), simplifyVector = FALSE)
+    parsed
   }, error = function(e) NULL)
 }
 
+# HMDB's REST API URL format has changed across versions; try several in order.
 hmdb_search_name <- function(nm) {
-  .hmdb_get(paste0(
-    "https://hmdb.ca/metabolites.json?filter%5Bname_query%5D=",
-    URLencode(nm, reserved = TRUE)
-  ))
+  enc <- URLencode(nm, reserved = TRUE)
+  urls <- c(
+    paste0("https://hmdb.ca/metabolites.json?filter%5Bname_query%5D=", enc),
+    paste0("https://hmdb.ca/metabolites.json?name=",                    enc),
+    paste0("https://hmdb.ca/metabolites.json?q=",                       enc)
+  )
+  for (url in urls) {
+    res <- .hmdb_get(url)
+    if (!is.null(res) && length(res$metabolites) > 0) return(res)
+  }
+  NULL
 }
 
+# Diagnostic: call once on a known compound so the user can see whether HMDB is reachable
+.hmdb_api_ok <- local({
+  tested <- FALSE
+  function() {
+    if (tested) return(invisible(NULL))
+    tested <<- TRUE
+    res <- hmdb_search_name("glucose")
+    if (is.null(res) || !length(res$metabolites)) {
+      message("  WARNING: HMDB API returned no results for 'glucose'.")
+      message("  HMDB pathway data will be skipped. Check your internet connection")
+      message("  or set use_hmdb = FALSE to suppress this message.")
+    } else {
+      message(sprintf("  HMDB API OK — %d result(s) for 'glucose'", length(res$metabolites)))
+    }
+  }
+})
+
 hmdb_search_mz <- function(mz, tol_ppm = 10) {
-  # Assume [M+H]+ adduct; adjust if your data uses a different ionisation mode
+  # Assumes [M+H]+ adduct
   mass <- mz - 1.007276
   tol  <- mass * tol_ppm / 1e6
-  .hmdb_get(sprintf(
-    "https://hmdb.ca/metabolites.json?filter%%5Bmass_min%%5D=%.5f&filter%%5Bmass_max%%5D=%.5f",
-    mass - tol, mass + tol
-  ))
+  urls <- c(
+    sprintf("https://hmdb.ca/metabolites.json?filter%%5Bmass_min%%5D=%.5f&filter%%5Bmass_max%%5D=%.5f",
+            mass - tol, mass + tol),
+    sprintf("https://hmdb.ca/metabolites.json?mass_min=%.5f&mass_max=%.5f",
+            mass - tol, mass + tol)
+  )
+  for (url in urls) {
+    res <- .hmdb_get(url)
+    if (!is.null(res) && length(res$metabolites) > 0) return(res)
+  }
+  NULL
 }
 
 hmdb_pathways <- function(hmdb_id) {
@@ -236,6 +269,8 @@ first_accession <- function(resp) {
 }
 
 map_hmdb <- function(avg, cache_file = "hmdb_mapping_cache.rds") {
+  .hmdb_api_ok()   # connectivity check on first call
+
   cache <- if (file.exists(cache_file)) readRDS(cache_file) else list()
 
   named_cmpds <- unique(avg$compound) %>%
