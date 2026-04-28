@@ -119,26 +119,37 @@ average_intensities <- function(data, sample_info) {
 
 # ── 5a. KEGG pathway mapping (name-based, with on-disk cache) ─────────────────
 map_kegg <- function(avg, cache_file = "kegg_mapping_cache.rds") {
-  cache <- if (file.exists(cache_file)) readRDS(cache_file) else list(hits = list(), pw_names = c())
+  # Cache stores only per-compound hits (the slow part).
+  # Pathway names are always fetched fresh — it is one fast API call and
+  # avoids stale/missing names from old cache files.
+  hit_cache <- if (file.exists(cache_file)) {
+    raw <- readRDS(cache_file)
+    # Handle old cache format that stored hits inside a $hits sub-list
+    if (is.list(raw) && !is.null(raw$hits)) raw$hits else raw
+  } else {
+    list()
+  }
 
-  # Only string (non-numeric) names can be searched by name in KEGG
+  # Fetch human pathway name table (path:hsa##### → "Pathway Name")
+  message("  Fetching KEGG pathway name list…")
+  pw_names <- tryCatch({
+    pw <- keggList("pathway", "hsa")
+    setNames(sub("\\s*-\\s*Homo sapiens.*$", "", pw), names(pw))
+  }, error = function(e) {
+    message("  WARNING: could not fetch KEGG pathway names — IDs will be used instead")
+    c()
+  })
+  message(sprintf("  %d human KEGG pathways loaded", length(pw_names)))
+
+  # Only string (non-numeric) names can be searched in KEGG by name
   search_names <- unique(avg$compound) %>%
     .[!grepl("^[0-9.\\s]+$", .)]
 
   message(sprintf("KEGG: querying %d named compounds (may take several minutes)…", length(search_names)))
 
-  # Fetch the full HSA pathway name table once
-  if (!length(cache$pw_names)) {
-    message("  Fetching KEGG pathway list…")
-    cache$pw_names <- tryCatch({
-      pw <- keggList("pathway", "hsa")
-      setNames(sub("\\s*-\\s*Homo sapiens.*$", "", pw), names(pw))
-    }, error = function(e) c())
-  }
-
   for (i in seq_along(search_names)) {
     nm <- search_names[i]
-    if (!is.null(cache$hits[[nm]])) next
+    if (!is.null(hit_cache[[nm]])) next
 
     Sys.sleep(0.35)  # respect KEGG rate limit
 
@@ -156,26 +167,25 @@ map_kegg <- function(avg, cache_file = "kegg_mapping_cache.rds") {
       }, error = function(e) character(0))
     }
 
-    cache$hits[[nm]] <- pathways
+    hit_cache[[nm]] <- pathways
 
     if (i %% 20 == 0) {
       message(sprintf("  KEGG: %d / %d", i, length(search_names)))
-      saveRDS(cache, cache_file)
+      saveRDS(hit_cache, cache_file)
     }
   }
 
-  saveRDS(cache, cache_file)
+  saveRDS(hit_cache, cache_file)
 
-  map_df <- bind_rows(lapply(names(cache$hits), function(nm) {
-    pws <- cache$hits[[nm]]
+  map_df <- bind_rows(lapply(names(hit_cache), function(nm) {
+    pws <- hit_cache[[nm]]
     if (!length(pws)) return(NULL)
+    # path:map##### and path:hsa##### share the same number; convert for lookup
+    k <- sub("^path:map", "path:hsa", pws)
     tibble(
       compound     = nm,
       pathway_id   = pws,
-      pathway_name = {
-        k <- sub("^path:map", "path:hsa", pws)
-        ifelse(k %in% names(cache$pw_names), cache$pw_names[k], pws)
-      },
+      pathway_name = ifelse(k %in% names(pw_names), unname(pw_names[k]), pws),
       db           = "KEGG"
     )
   }))
