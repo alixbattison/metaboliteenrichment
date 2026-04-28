@@ -60,26 +60,31 @@ load_data <- function(file_path) {
 # NC and NN are pooled → "Control"; TC and TN remain separate treatment arms.
 parse_samples <- function(data) {
   cols <- colnames(data)
-  pat  <- "^(?:plasma_)?(NC|NN|TC|TN)(\\d+)$"
+  # Pattern handles:
+  #   plain conditions:      NC1, NN2, TC3, TN4, C1
+  #   plasma_ prefix:        Plasma_NC1, Plasma_C2
+  #   technical-rep suffix:  Plasma_NC2_1, Plasma_TC2_2
+  # NC, NN, and bare C are all pooled as "Control"
+  pat  <- "^(?:plasma_)?(NC|NN|TC|TN|C)(\\d+)(_\\d+)?$"
   sample_cols <- cols[grepl(pat, cols, perl = TRUE, ignore.case = TRUE)]
 
   if (!length(sample_cols))
     stop(
       "No sample columns found.\n",
-      "Expected names like NC1, NN2, TC1, plasma_TN3, etc.\n",
+      "Expected names like NC1, NN2, TC1, C3, plasma_TN3, Plasma_NC2_1, etc.\n",
       "Columns seen: ", paste(head(cols, 20), collapse = ", ")
     )
 
   meta <- tibble(raw = sample_cols) %>%
     mutate(
       stripped  = sub("(?i)^plasma_", "", raw, perl = TRUE),
-      grp_raw   = sub("(?i)(NC|NN|TC|TN)(\\d+)$", "\\1", stripped, perl = TRUE),
-      replicate = as.integer(sub("(?i)(NC|NN|TC|TN)(\\d+)$", "\\2", stripped, perl = TRUE)),
+      grp_raw   = sub("(?i)^(NC|NN|TC|TN|C)(\\d+)(_\\d+)?$", "\\1", stripped, perl = TRUE),
+      replicate = as.integer(sub("(?i)^(NC|NN|TC|TN|C)(\\d+)(_\\d+)?$", "\\2", stripped, perl = TRUE)),
       condition = case_when(
-        toupper(grp_raw) %in% c("NC", "NN") ~ "Control",
-        toupper(grp_raw) == "TC"             ~ "TC",
-        toupper(grp_raw) == "TN"             ~ "TN",
-        TRUE                                  ~ grp_raw
+        toupper(grp_raw) %in% c("NC", "NN", "C") ~ "Control",
+        toupper(grp_raw) == "TC"                  ~ "TC",
+        toupper(grp_raw) == "TN"                  ~ "TN",
+        TRUE                                       ~ grp_raw
       )
     )
 
@@ -95,8 +100,8 @@ average_intensities <- function(data, sample_info) {
     grep(pattern, colnames(data), ignore.case = TRUE, value = TRUE)[1]
 
   name_col <- find_col("^name$")
-  mz_col   <- find_col("^(mz|m\\.z|m/z)$")
-  rt_col   <- find_col("^(rt|retention)")
+  mz_col   <- find_col("^(mz|m\\.z|m/z)")   # no $ — matches "m/z meas." etc.
+  rt_col   <- find_col("^rt\\b|^retention")  # matches "RT [min]" and "retention time"
 
   if (any(is.na(c(name_col, mz_col, rt_col))))
     stop("Could not locate name/mz/rt columns. Found: ", paste(colnames(data), collapse = ", "))
