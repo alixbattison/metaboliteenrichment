@@ -172,7 +172,10 @@ map_kegg <- function(avg, cache_file = "kegg_mapping_cache.rds") {
     tibble(
       compound     = nm,
       pathway_id   = pws,
-      pathway_name = ifelse(pws %in% names(cache$pw_names), cache$pw_names[pws], pws),
+      pathway_name = {
+        k <- sub("^path:map", "path:hsa", pws)
+        ifelse(k %in% names(cache$pw_names), cache$pw_names[k], pws)
+      },
       db           = "KEGG"
     )
   }))
