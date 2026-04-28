@@ -140,6 +140,8 @@ map_kegg <- function(avg, cache_file = "kegg_mapping_cache.rds") {
     c()
   })
   message(sprintf("  %d human KEGG pathways loaded", length(pw_names)))
+  if (length(pw_names) > 0)
+    message("  Example pw_names entry: ", names(pw_names)[1], " → '", pw_names[[1]], "'")
 
   # Only string (non-numeric) names can be searched in KEGG by name
   search_names <- unique(avg$compound) %>%
@@ -177,15 +179,34 @@ map_kegg <- function(avg, cache_file = "kegg_mapping_cache.rds") {
 
   saveRDS(hit_cache, cache_file)
 
+  # One-time diagnostic: show raw pathway IDs returned by keggLink
+  first_hit <- Filter(function(x) length(x) > 0, hit_cache)
+  if (length(first_hit) > 0) {
+    sample_pws <- first_hit[[1]]
+    k_sample   <- sub("^path:map", "path:hsa", sample_pws)
+    message("  Example pathway IDs from keggLink: ", paste(sample_pws, collapse = ", "))
+    message("  After map→hsa conversion:          ", paste(k_sample,   collapse = ", "))
+    message("  Found in pw_names: ", paste(k_sample %in% names(pw_names), collapse = ", "))
+  }
+
+  resolve_name <- function(pw_id) {
+    # Try direct match, then map→hsa conversion, then strip the "path:" prefix
+    if (pw_id %in% names(pw_names))                          return(unname(pw_names[pw_id]))
+    hsa <- sub("^path:map", "path:hsa", pw_id)
+    if (hsa %in% names(pw_names))                            return(unname(pw_names[hsa]))
+    bare <- sub("^path:", "", pw_id)
+    hsa2 <- paste0("path:hsa", sub("^[a-z]+", "", bare))
+    if (hsa2 %in% names(pw_names))                           return(unname(pw_names[hsa2]))
+    pw_id  # fallback to raw ID
+  }
+
   map_df <- bind_rows(lapply(names(hit_cache), function(nm) {
     pws <- hit_cache[[nm]]
     if (!length(pws)) return(NULL)
-    # path:map##### and path:hsa##### share the same number; convert for lookup
-    k <- sub("^path:map", "path:hsa", pws)
     tibble(
       compound     = nm,
       pathway_id   = pws,
-      pathway_name = ifelse(k %in% names(pw_names), unname(pw_names[k]), pws),
+      pathway_name = vapply(pws, resolve_name, character(1)),
       db           = "KEGG"
     )
   }))
