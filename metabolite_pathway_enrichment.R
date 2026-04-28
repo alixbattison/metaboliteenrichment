@@ -189,15 +189,14 @@ map_kegg <- function(avg, cache_file = "kegg_mapping_cache.rds") {
     message("  Found in pw_names: ", paste(k_sample %in% names(pw_names), collapse = ", "))
   }
 
+  # keggList returns bare IDs ("hsa01100"), keggLink returns prefixed ("path:map00904")
+  # Strip "path:" and convert map→hsa before lookup
   resolve_name <- function(pw_id) {
-    # Try direct match, then map→hsa conversion, then strip the "path:" prefix
-    if (pw_id %in% names(pw_names))                          return(unname(pw_names[pw_id]))
-    hsa <- sub("^path:map", "path:hsa", pw_id)
-    if (hsa %in% names(pw_names))                            return(unname(pw_names[hsa]))
-    bare <- sub("^path:", "", pw_id)
-    hsa2 <- paste0("path:hsa", sub("^[a-z]+", "", bare))
-    if (hsa2 %in% names(pw_names))                           return(unname(pw_names[hsa2]))
-    pw_id  # fallback to raw ID
+    bare     <- sub("^path:", "", pw_id)      # "path:map00904" → "map00904"
+    hsa_bare <- sub("^map",   "hsa", bare)    # "map00904"      → "hsa00904"
+    if (hsa_bare %in% names(pw_names)) return(unname(pw_names[hsa_bare]))
+    if (bare     %in% names(pw_names)) return(unname(pw_names[bare]))
+    pw_id  # fallback
   }
 
   map_df <- bind_rows(lapply(names(hit_cache), function(nm) {
